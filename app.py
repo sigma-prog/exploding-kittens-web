@@ -4,318 +4,325 @@ import json
 import os
 import time
 
-# --- CONSTANTS ---
+# --- PROFESSIONAL STYLING (THE "PRO" LOOK) ---
+st.set_page_config(page_title="Exploding Kittens | Pro Edition", layout="wide")
+
+st.markdown("""
+    <style>
+    /* Main Background */
+    .stApp {
+        background-color: #0E1117;
+        color: #E0E0E0;
+    }
+    
+    /* Card Component */
+    .card-pro {
+        border: 1px solid #30363D;
+        border-radius: 8px;
+        padding: 15px;
+        background-color: #161B22;
+        text-align: center;
+        transition: transform 0.2s;
+        min-height: 120px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+    }
+    .card-pro:hover {
+        border-color: #58A6FF;
+    }
+    .card-title {
+        color: #58A6FF;
+        font-weight: 600;
+        font-size: 0.9rem;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+    }
+    
+    /* Stats Sidebar */
+    .css-163ttbj {
+        background-color: #010409;
+    }
+    
+    /* Custom Button Styling */
+    div.stButton > button:first-child {
+        background-color: #21262D;
+        color: #C9D1D9;
+        border: 1px solid #30363D;
+        border-radius: 6px;
+        width: 100%;
+    }
+    div.stButton > button:hover {
+        border-color: #8B949E;
+        color: #FFFFFF;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
+# --- GAME CONSTANTS ---
 CARD_TYPES = {
-    "Exploding Kitten": 1,
-    "Defuse": 3,
-    "Nope": 6,
-    "Taco Cat": 7,
-    "Beard Cat": 7,
-    "Rainbow Ralphing Cat": 7,
-    "Skip": 4,
-    "Attack": 4,
-    "See the Future": 4,
-    "Favor": 3,
-    "Shuffle": 3,
-    "Peek": 1,
-    "Unlucky": 2,
+    "Exploding Kitten": 1, "Defuse": 3, "Nope": 6, "Taco Cat": 7,
+    "Beard Cat": 7, "Rainbow Ralphing Cat": 7, "Skip": 4, "Attack": 4,
+    "See the Future": 4, "Favor": 3, "Shuffle": 3, "Peek": 1, "Unlucky": 2,
 }
 CAT_CARDS = ["Taco Cat", "Beard Cat", "Rainbow Ralphing Cat"]
-STATS_FILE = "ek_stats.json"
 
-def sort_hand(hand):
-    order = ['Defuse', 'Nope', 'Skip', 'Attack', 'See the Future', 'Favor', 'Shuffle', 'Peek', 'Unlucky', 'Taco Cat', 'Beard Cat', 'Rainbow Ralphing Cat']
-    return sorted(hand, key=lambda c: order.index(c) if c in order else 99)
-
-# --- STATS PERSISTENCE ---
-def load_stats():
-    if os.path.exists(STATS_FILE):
-        try:
-            with open(STATS_FILE, "r") as f: return json.load(f)
-        except: pass
-    return {"games_played": 0, "player_wins": 0, "ai_wins": 0}
-
-def save_stats(stats):
-    with open(STATS_FILE, "w") as f: json.dump(stats, f)
-
-# --- SESSION INITIALIZATION ---
-if 'game_initialized' not in st.session_state:
-    st.session_state.deck = []
-    st.session_state.discard_pile = []
-    st.session_state.player_hand = []
+# --- SESSION STATE INITIALIZATION ---
+if 'init' not in st.session_state:
+    st.session_state.init = True
+    st.session_state.p_hand = []
     st.session_state.ai_hand = []
-    st.session_state.log = []
-    st.session_state.history = []
+    st.session_state.deck = []
+    st.session_state.discard = []
+    st.session_state.turn = "Player"
+    st.session_state.attack_turns = 0
     st.session_state.game_over = False
     st.session_state.winner = None
-    st.session_state.attack_turns = 0
-    st.session_state.turn = "Player"
-    st.session_state.seen_top_cards = []
-    st.session_state.pending_action = None 
-    st.session_state.nope_chain_active = False
-    st.session_state.last_played_card = None
-    st.session_state.action_blocked = False
-    st.session_state.game_initialized = True
-    
-    # Setup Deck
+    st.session_state.logs = []
+    st.session_state.history = []
+    st.session_state.phase = "MAIN" # MAIN, NOPE_OPPORTUNITY, DISCARD_REQUIRED, FAVOR_WAIT
+    st.session_state.pending_action = None # Card being played
+
+# --- CORE LOGIC FUNCTIONS ---
+def log_event(msg):
+    st.session_state.logs.insert(0, msg)
+    st.session_state.history.append(msg)
+
+def save_stats(winner):
+    stats_file = "ek_stats.json"
+    data = {"games_played": 0, "player_wins": 0, "ai_wins": 0}
+    if os.path.exists(stats_file):
+        with open(stats_file, "r") as f: data = json.load(f)
+    data["games_played"] += 1
+    if winner == "Player": data["player_wins"] += 1
+    else: data["ai_wins"] += 1
+    with open(stats_file, "w") as f: json.dump(data, f)
+
+def setup_game():
     temp_deck = []
     for card, count in CARD_TYPES.items():
         if card not in ["Exploding Kitten", "Defuse"]:
             temp_deck.extend([card] * count)
     random.shuffle(temp_deck)
     
-    # Deal
-    st.session_state.player_hand = [temp_deck.pop() for _ in range(4)] + ["Defuse"]
+    st.session_state.p_hand = [temp_deck.pop() for _ in range(4)] + ["Defuse"]
     st.session_state.ai_hand = [temp_deck.pop() for _ in range(4)] + ["Defuse"]
-    st.session_state.player_hand = sort_hand(st.session_state.player_hand)
     
     st.session_state.deck = temp_deck + ["Exploding Kitten"]
     random.shuffle(st.session_state.deck)
-    st.session_state.log.append("Game Started. Stats loaded.")
+    st.session_state.game_over = False
+    st.session_state.phase = "MAIN"
+    log_event("DECK INITIALIZED: SYSTEM READY")
 
-def add_log(msg, player="System"):
-    entry = f"[{player}] {msg}"
-    st.session_state.log.append(entry)
-    st.session_state.history.append({"player": player, "msg": msg})
-
-# --- GAME LOGIC ---
-
-def draw_card(player_name):
+def process_draw(player):
     if not st.session_state.deck:
-        if not st.session_state.discard_pile:
-            st.session_state.game_over = True
-            st.session_state.winner = "AI" if player_name == "Player" else "Player"
-            return
-        add_log("Deck empty. Shuffling discard pile back in.")
-        st.session_state.deck = st.session_state.discard_pile[:]
-        st.session_state.discard_pile = []
+        log_event("DECK EMPTY: RECYCLING DISCARD PILE")
+        st.session_state.deck = st.session_state.discard[:]
+        st.session_state.discard = []
         random.shuffle(st.session_state.deck)
-
+    
     card = st.session_state.deck.pop(0)
     
-    if card == "Unlucky":
-        add_log(f"drew Unlucky! A random card was lost.", player_name)
-        hand = st.session_state.player_hand if player_name == "Player" else st.session_state.ai_hand
-        if hand:
-            lost = random.choice(hand)
-            hand.remove(lost)
-            st.session_state.discard_pile.append(lost)
-        return True
-
     if card == "Exploding Kitten":
-        hand = st.session_state.player_hand if player_name == "Player" else st.session_state.ai_hand
-        if "Defuse" in hand:
-            hand.remove("Defuse")
-            st.session_state.discard_pile.append("Defuse")
+        if "Defuse" in st.session_state[f"{'p' if player=='Player' else 'ai'}_hand"]:
+            st.session_state[f"{'p' if player=='Player' else 'ai'}_hand"].remove("Defuse")
+            st.session_state.discard.append("Defuse")
+            # Logic: insert kitten at random index
             idx = random.randint(0, len(st.session_state.deck))
             st.session_state.deck.insert(idx, "Exploding Kitten")
-            add_log(f"used Defuse! Kitten returned to deck at random position.", player_name)
-            st.session_state.seen_top_cards = []
+            log_event(f"ALERT: {player.upper()} DEFUSED EXPLODING KITTEN")
         else:
             st.session_state.game_over = True
-            st.session_state.winner = "AI" if player_name == "Player" else "Player"
-            add_log(f"exploded! Game Over.", player_name)
-            # Update Stats
-            stats = load_stats()
-            stats["games_played"] += 1
-            if st.session_state.winner == "Player": stats["player_wins"] += 1
-            else: stats["ai_wins"] += 1
-            save_stats(stats)
-    else:
-        if player_name == "Player":
-            st.session_state.player_hand.append(card)
-            st.session_state.player_hand = sort_hand(st.session_state.player_hand)
+            st.session_state.winner = "AI" if player == "Player" else "Player"
+            save_stats(st.session_state.winner)
+            log_event(f"CRITICAL: {player.upper()} EXPLODED")
+            return
+            
+    elif card == "Unlucky":
+        log_event(f"UNLUCKY: {player.upper()} MUST DISCARD")
+        if player == "Player":
+            st.session_state.phase = "DISCARD_REQUIRED"
         else:
-            st.session_state.ai_hand.append(card)
-        add_log(f"drew safely.", player_name)
-
-def execute_effect(card, player):
-    if st.session_state.action_blocked:
-        add_log(f"{card} was blocked by a Nope!", player)
-        st.session_state.action_blocked = False
-        return
-
-    add_log(f"played {card}", player)
-    if card == "Skip": end_turn()
-    elif card == "Attack": 
-        st.session_state.attack_turns = 2
-        end_turn()
-    elif card == "See the Future": st.session_state.seen_top_cards = st.session_state.deck[:3]
-    elif card == "Shuffle": random.shuffle(st.session_state.deck)
-    elif card == "Peek": 
-        target = "AI" if player == "Player" else "Player"
-        t_hand = st.session_state.ai_hand if target == "AI" else st.session_state.player_hand
-        add_log(f"Peeked at {target}'s hand: {t_hand[:2]}", player)
-    elif card == "Favor": 
-        st.session_state.pending_action = {"type": "favor", "source": player}
-
-def end_turn():
-    if st.session_state.attack_turns > 0:
-        st.session_state.attack_turns -= 1
-        add_log(f"Attack active. Extra turn remaining for {st.session_state.turn}.")
+            if st.session_state.ai_hand:
+                c = random.choice(st.session_state.ai_hand)
+                st.session_state.ai_hand.remove(c)
+                st.session_state.discard.append(c)
     else:
-        st.session_state.turn = "AI" if st.session_state.turn == "Player" else "Player"
-        if st.session_state.turn == "AI":
-            run_ai_logic()
+        st.session_state[f"{'p' if player=='Player' else 'ai'}_hand"].append(card)
+        log_event(f"DRAW: {player.upper()} RECEIVED {card.upper()}")
 
-def run_ai_logic():
-    hand = st.session_state.ai_hand
-    # AI checks for danger
-    top_cards = st.session_state.seen_top_cards if st.session_state.seen_top_cards else st.session_state.deck[:3]
+    # Turn switching logic for simple draws
+    if st.session_state.phase == "MAIN":
+        if st.session_state.attack_turns > 0:
+            st.session_state.attack_turns -= 1
+            if st.session_state.attack_turns == 0:
+                st.session_state.turn = "AI" if player == "Player" else "Player"
+        else:
+            st.session_state.turn = "AI" if player == "Player" else "Player"
+
+def execute_card(card, player):
+    st.session_state.discard.append(card)
+    log_event(f"ACTION: {player.upper()} PLAYED {card.upper()}")
     
-    # AI plays defensive if kitten is near
-    if "Exploding Kitten" in top_cards:
-        for escape in ["Skip", "Shuffle", "Attack"]:
-            if escape in hand:
-                # AI plays card
-                hand.remove(escape)
-                st.session_state.discard_pile.append(escape)
-                # Check for player Nope (Simplified for AI turn flow)
-                execute_effect(escape, "AI")
-                return
+    if card == "Skip":
+        st.session_state.turn = "AI" if player == "Player" else "Player"
+    elif card == "Attack":
+        st.session_state.attack_turns = 2
+        st.session_state.turn = "AI" if player == "Player" else "Player"
+    elif card == "See the Future":
+        st.session_state.future = st.session_state.deck[:3]
+        log_event(f"FUTURE DATA: {', '.join(st.session_state.future)}")
+    elif card == "Shuffle":
+        random.shuffle(st.session_state.deck)
+        log_event("SYSTEM: DECK SHUFFLED")
+    elif card == "Favor":
+        st.session_state.phase = "FAVOR_WAIT"
+    elif card == "Peek":
+        target = st.session_state.ai_hand if player == "Player" else st.session_state.p_hand
+        log_event(f"PEEK DATA: {target[:2]}")
 
-    # Draw if no defensive moves needed
-    draw_card("AI")
-    st.session_state.turn = "Player"
-
-# --- UI SETUP ---
-st.set_page_config(page_title="Exploding Kittens Full", layout="wide")
-st.title("Exploding Kittens")
-
-stats = load_stats()
-st.sidebar.subheader("Lifetime Stats")
-st.sidebar.write(f"Games: {stats['games_played']}")
-st.sidebar.write(f"Your Wins: {stats['player_wins']}")
-st.sidebar.write(f"AI Wins: {stats['ai_wins']}")
-
-if st.session_state.game_over:
-    st.header(f"Final Result: {st.session_state.winner} Wins!")
+# --- SIDEBAR: STATS & LOGS ---
+with st.sidebar:
+    st.title("COMMAND CENTER")
+    if os.path.exists("ek_stats.json"):
+        with open("ek_stats.json", "r") as f:
+            stats = json.load(f)
+            st.metric("GAMES PLAYED", stats["games_played"])
+            st.metric("PLAYER WINS", stats["player_wins"])
+            st.metric("AI WINS", stats["ai_wins"])
     
-    with st.expander("Show Game History Replay"):
-        for i, entry in enumerate(st.session_state.history):
-            st.write(f"{i+1}. {entry['player']}: {entry['msg']}")
-            
-    if st.button("Play Again"):
-        for key in list(st.session_state.keys()): del st.session_state[key]
+    st.divider()
+    st.subheader("ACTIVITY LOG")
+    for log in st.session_state.logs[:15]:
+        st.caption(log)
+
+# --- MAIN UI ---
+if not st.session_state.p_hand and not st.session_state.game_over:
+    st.header("SURVIVAL INTERFACE")
+    if st.button("INITIALIZE SESSION"):
+        setup_game()
         st.rerun()
+
+elif st.session_state.game_over:
+    st.title("SESSION TERMINATED")
+    st.header(f"WINNER: {st.session_state.winner.upper()}")
+    if st.button("RESTART SYSTEM"):
+        setup_game()
+        st.rerun()
+    
+    st.divider()
+    st.subheader("REPLAY DATA")
+    st.write(st.session_state.history)
+
 else:
-    # --- NOPE OVERLAY ---
-    if st.session_state.nope_chain_active:
-        st.warning(f"WAIT! {st.session_state.last_played_card} was played. Do you want to NOPE it?")
-        c1, c2 = st.columns(2)
-        if "Nope" in st.session_state.player_hand:
-            if c1.button("PLAY NOPE"):
-                st.session_state.player_hand.remove("Nope")
-                st.session_state.discard_pile.append("Nope")
-                st.session_state.action_blocked = not st.session_state.action_blocked
-                add_log("played NOPE!", "Player")
-                # AI Logic: AI tries to Nope back
-                if "Nope" in st.session_state.ai_hand and random.random() < 0.5:
-                    st.session_state.ai_hand.remove("Nope")
-                    st.session_state.discard_pile.append("Nope")
-                    st.session_state.action_blocked = not st.session_state.action_blocked
-                    add_log("played NOPE back!", "AI")
+    # Top Row: AI Status & Deck
+    c1, c2, c3 = st.columns([1, 2, 1])
+    with c1:
+        st.write("OPPONENT: AI")
+        st.code(f"CARDS: {len(st.session_state.ai_hand)}")
+    with c2:
+        st.markdown(f"<div style='text-align:center'><h3>SYSTEM PHASE: {st.session_state.turn.upper()}</h3></div>", unsafe_allow_html=True)
+        if st.session_state.discard:
+            st.markdown(f"""
+                <div style="background-color: #010409; padding: 20px; border: 1px solid #30363D; text-align: center; border-radius: 10px;">
+                    <p style="color: #8B949E; font-size: 0.8rem;">DISCARD STACK TOP</p>
+                    <h2 style="color: #E6EDF3;">{st.session_state.discard[-1].upper()}</h2>
+                </div>
+            """, unsafe_allow_html=True)
+    with c3:
+        st.write("DECK STATUS")
+        st.code(f"REMAINING: {len(st.session_state.deck)}")
+
+    st.divider()
+
+    # Interaction Phase
+    if st.session_state.phase == "DISCARD_REQUIRED":
+        st.warning("UNLUCKY PROTOCOL: SELECT A CARD TO DISCARD")
+        cols = st.columns(len(st.session_state.p_hand))
+        for i, card in enumerate(st.session_state.p_hand):
+            if cols[i].button(card, key=f"disc_{i}"):
+                st.session_state.p_hand.remove(card)
+                st.session_state.discard.append(card)
+                st.session_state.phase = "MAIN"
                 st.rerun()
-        if c2.button("PASS (Let it happen)"):
-            st.session_state.nope_chain_active = False
-            execute_effect(st.session_state.last_played_card, "Player")
-            st.rerun()
-        st.stop()
 
-    col1, col2 = st.columns([2, 1])
-
-    with col1:
-        st.subheader("Your Hand")
-        cols = st.columns(4)
-        for i, card in enumerate(st.session_state.player_hand):
-            with cols[i % 4]:
-                if st.button(card, key=f"c_{i}", use_container_width=True):
-                    if card == "Defuse": st.error("Defuse is automatic.")
-                    elif card == "Nope": st.info("Use Nope when the AI plays a card.")
-                    elif card in CAT_CARDS:
-                        st.session_state.pending_action = {"type": "cat_check", "card": card}
-                        st.rerun()
-                    else:
-                        st.session_state.player_hand.remove(card)
-                        st.session_state.discard_pile.append(card)
-                        st.session_state.last_played_card = card
-                        # Check if AI wants to Nope you
-                        if "Nope" in st.session_state.ai_hand and random.random() < 0.3:
-                            st.session_state.ai_hand.remove("Nope")
-                            st.session_state.discard_pile.append("Nope")
-                            add_log("AI used NOPE on your turn!", "AI")
-                            st.session_state.action_blocked = True
-                        
-                        # In the web version, we use the overlay for player Nopes, 
-                        # but for regular cards we execute immediately unless blocked
-                        execute_effect(card, "Player")
-                        st.rerun()
-
-        st.divider()
-        if st.button("Draw Card & End Turn", type="primary", use_container_width=True):
-            draw_card("Player")
-            if not st.session_state.game_over: end_turn()
+    elif st.session_state.phase == "FAVOR_WAIT":
+        st.info("FAVOR PROTOCOL: WAITING FOR TRANSACTION")
+        if st.session_state.turn == "Player":
+            # AI gives to player
+            if st.session_state.ai_hand:
+                gift = random.choice(st.session_state.ai_hand)
+                st.session_state.ai_hand.remove(gift)
+                st.session_state.p_hand.append(gift)
+                log_event(f"TRANSFER: RECEIVED {gift.upper()} FROM AI")
+            st.session_state.phase = "MAIN"
             st.rerun()
 
-    with col2:
-        st.subheader("Table")
-        st.write(f"Deck: {len(st.session_state.deck)} | Discard: {len(st.session_state.discard_pile)}")
-        if st.session_state.seen_top_cards:
-            st.info(f"Future: {st.session_state.seen_top_cards}")
+    elif st.session_state.turn == "Player":
+        col_draw, col_help = st.columns([1, 1])
+        if col_draw.button("DRAW CARD / END TURN", type="primary"):
+            process_draw("Player")
+            st.rerun()
         
-        # Action Center
-        if st.session_state.pending_action:
-            act = st.session_state.pending_action
-            st.write("--- Action Required ---")
-            
-            if act["type"] == "cat_check":
-                card_name = act["card"]
-                count = st.session_state.player_hand.count(card_name)
-                st.write(f"You have {count} {card_name}s.")
-                if count >= 2 and st.button("Play Pair (Steal Random)"):
-                    for _ in range(2): st.session_state.player_hand.remove(card_name)
-                    st.session_state.pending_action = {"type": "steal"}
+        st.subheader("PLAYER HAND")
+        # Grid of cards
+        cols = st.columns(5)
+        for i, card in enumerate(st.session_state.p_hand):
+            with cols[i % 5]:
+                st.markdown(f"""
+                    <div class="card-pro">
+                        <div class="card-title">{card}</div>
+                    </div>
+                """, unsafe_allow_html=True)
+                
+                # Logic for playing
+                if card in ["Defuse", "Nope", "Exploding Kitten"]:
+                    st.button("LOCKED", key=f"btn_{i}", disabled=True)
+                else:
+                    if st.button("EXECUTE", key=f"btn_{i}"):
+                        st.session_state.p_hand.remove(card)
+                        execute_card(card, "Player")
+                        st.rerun()
+        
+        # Pairs / Trios Section
+        st.divider()
+        st.subheader("COMBINATORIAL ACTIONS")
+        cat_counts = {cat: st.session_state.p_hand.count(cat) for cat in CAT_CARDS}
+        pc1, pc2 = st.columns(2)
+        for cat, count in cat_counts.items():
+            if count >= 2:
+                if pc1.button(f"PAIR: {cat.upper()}"):
+                    for _ in range(2): st.session_state.p_hand.remove(cat)
+                    # Steal random from AI
+                    if st.session_state.ai_hand:
+                        stolen = random.choice(st.session_state.ai_hand)
+                        st.session_state.ai_hand.remove(stolen)
+                        st.session_state.p_hand.append(stolen)
+                        log_event(f"THEFT: ACQUIRED {stolen.upper()}")
                     st.rerun()
-                if count >= 3 and st.button("Play Trio (Ask for Card)"):
-                    for _ in range(3): st.session_state.player_hand.remove(card_name)
-                    st.session_state.pending_action = {"type": "ask"}
-                    st.rerun()
-                if st.button("Cancel"):
-                    st.session_state.pending_action = None
-                    st.rerun()
-
-            elif act["type"] == "ask":
-                target_card = st.selectbox("Ask AI for:", list(CARD_TYPES.keys()))
-                if st.button("Confirm Ask"):
-                    if target_card in st.session_state.ai_hand:
-                        st.session_state.ai_hand.remove(target_card)
-                        st.session_state.player_hand.append(target_card)
-                        add_log(f"asked for {target_card} and AI HAD IT!", "Player")
+            if count >= 3:
+                if pc2.button(f"TRIO: {cat.upper()}"):
+                    # Simplified Trio for Streamlit: asks for random valuable card
+                    for _ in range(3): st.session_state.p_hand.remove(cat)
+                    target = "Defuse"
+                    if target in st.session_state.ai_hand:
+                        st.session_state.ai_hand.remove(target)
+                        st.session_state.p_hand.append(target)
+                        log_event(f"TRIO SUCCESS: ACQUIRED {target.upper()}")
                     else:
-                        add_log(f"asked for {target_card} but AI didn't have it.", "Player")
-                    st.session_state.pending_action = None
+                        log_event("TRIO FAILURE: AI DOES NOT HAVE TARGET")
                     st.rerun()
 
-            elif act["type"] == "steal":
-                if st.button("Pull Card from AI"):
-                    if st.session_state.ai_hand:
-                        stolen = st.session_state.ai_hand.pop(random.randint(0, len(st.session_state.ai_hand)-1))
-                        st.session_state.player_hand.append(stolen)
-                        add_log(f"stole {stolen} from AI.", "Player")
-                    st.session_state.pending_action = None
-                    st.rerun()
-
-            elif act["type"] == "favor":
-                if st.button("Get card from AI"):
-                    if st.session_state.ai_hand:
-                        gift = st.session_state.ai_hand.pop(random.randint(0, len(st.session_state.ai_hand)-1))
-                        st.session_state.player_hand.append(gift)
-                        add_log(f"received {gift} via Favor.", "Player")
-                    st.session_state.pending_action = None
-                    st.rerun()
-
-        st.subheader("Activity Log")
-        for m in reversed(st.session_state.log[-12:]):
-            st.text(m)
-
-st.markdown("<style>.stButton>button { border-radius: 4px; font-weight: bold; }</style>", unsafe_allow_html=True)
+    else:
+        # AI TURN
+        st.info("AI PROCESSING...")
+        time.sleep(1.5)
+        # AI Simple logic: play a card if it has one, otherwise draw
+        playable = [c for c in st.session_state.ai_hand if c not in ["Defuse", "Nope"] + CAT_CARDS]
+        if playable and random.random() > 0.5:
+            c = playable[0]
+            st.session_state.ai_hand.remove(c)
+            execute_card(c, "AI")
+        else:
+            process_draw("AI")
+        st.rerun()
